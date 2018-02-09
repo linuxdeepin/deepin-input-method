@@ -1,0 +1,10 @@
+#ifndef _DIME_CONFIG_H__
+#define _DIME_CONFIG_H__
+
+/* configured by cmake, do not edit */
+
+#define DIME_VERSION "@PROJECT_VERSION@"
+#cmakedefine BUILD_FRONTEND 1
+#cmakedefine DIME_DEBUG
+
+#endif  /* _DIME_CONFIG_H__ */
