@@ -25,6 +25,9 @@
 #define G_LOG_DOMAIN "mq"
 
 #define MSG_BUF_SIZE 1024 /* this is big enough to hold any message */
+#define MSG_MAX_NR 10
+
+#define CLIENT_MAGIC 0xfadeceed
 
 struct _DimeServer {
     DIME_UUID initial; /* increment */
@@ -39,8 +42,17 @@ struct _DimeServer {
     GHashTable *token_map; /* <token, id> */
 };
 
+/* connection state */
+enum {
+    CONN_INITIALIZED,
+    CONN_HANDSHAKE,
+    CONN_ESTABLISHED,
+};
+
 typedef struct _DimeConnection {
     int id;
+
+    int8_t state;
 
     char mq_name[NAME_MAX];
     mqd_t mq_srv; /* send request */
@@ -56,7 +68,10 @@ typedef struct _DimeConnection {
 
 //FIXME: clients <-> mq map
 struct _DimeClient {
-    DIME_UUID token;
+    uint32_t magic;
+    DIME_UUID token; /* if token is 0, means token is not requested from server, 
+                        the reasons vary, e.g server is down */
+
     DimeConnection* conn; /* shared connection between all clients from one context */
 };
 
@@ -150,14 +165,59 @@ static gboolean client_dispatch_callback(GIOChannel *ch, GIOCondition condition,
 
 
     DimeMessage msg;
-    dime_debug("");
     if (_receive_message(_conn->mq_msg, _conn->msgbuf, _conn->msgsize, &msg) >= 0) {
         dime_debug("get %s", g_msgname[msg.type]);
+
+        switch(msg.type) {
+            case MSG_CONNECT:
+                if (_conn->state == CONN_HANDSHAKE) {
+                    g_assert(_conn->id == msg.connect.id);
+                    _conn->state = CONN_ESTABLISHED;
+                }
+                break;
+
+            case MSG_ACQUIRE_TOKEN: {
+                DimeClient* c = (DimeClient*)msg.token.outband;
+                g_assert(c->magic == CLIENT_MAGIC);
+                /*c->conn = _conn;*/
+                c->token = msg.token.token;
+                dime_info("acquired token %d", c->token);
+                break;
+            }
+            default: break;
+        }
     }
 
     return TRUE;
 }
 
+static int dime_mq_build_connect(DimeConnection* c)
+{
+    DimeMessageConnect msg_conn;
+    if (c->state == CONN_ESTABLISHED) return 0;
+
+    if (c->state == CONN_INITIALIZED) {
+        msg_conn.type = MSG_CONNECT;
+        msg_conn.id  = c->id;
+        _send_message(c->mq_srv, (DimeMessage*)&msg_conn);
+
+        c->state = CONN_HANDSHAKE;
+    }
+
+    int ret;
+    // should receive a pong reply
+    if ((ret = _receive_message(c->mq_msg, c->msgbuf, c->msgsize, (DimeMessage*)&msg_conn)) < 0) {
+        // means not connected, server may not start.
+        // TODO: pull up server right now and wait for async reply
+        return 0;
+    }
+
+    g_assert (msg_conn.id == c->id);
+    c->state = CONN_ESTABLISHED;
+    return 0;
+}
+
+//TODO: should allow dangling clients and reconnect when server gets back online.
 int dime_mq_connect()
 {
     if (_conn) {
@@ -167,16 +227,17 @@ int dime_mq_connect()
 
     DimeConnection* c = (DimeConnection*)calloc(1, sizeof(DimeConnection));
     c->id = getpid();
+    c->state = CONN_INITIALIZED;
 
     char *disp = getenv("DISPLAY");
     snprintf(c->mq_name, NAME_MAX, DIME_SERVER_MQ_NAME_TMPL, disp);
-    dime_debug("connect to %s", c->mq_name);
+    dime_info("connect to %s", c->mq_name);
 
     struct mq_attr attr = {
         .mq_curmsgs = 0,
         .mq_flags = 0,
         .mq_msgsize = MSG_BUF_SIZE,
-        .mq_maxmsg = 10,
+        .mq_maxmsg = MSG_MAX_NR,
     };
     c->mq_srv = mq_open(c->mq_name, O_CREAT|O_WRONLY|O_NONBLOCK, 0664, &attr);
     if (c->mq_srv < 0) {
@@ -185,39 +246,31 @@ int dime_mq_connect()
     }
 
     mq_getattr(c->mq_srv, &attr);
+    g_assert(attr.mq_msgsize == MSG_BUF_SIZE);
+    dime_debug("attr.mq_maxmsg = %d", attr.mq_maxmsg);
+    g_assert(attr.mq_maxmsg == MSG_MAX_NR);
     c->msgsize = attr.mq_msgsize;
     c->msgbuf = (char*)malloc(c->msgsize);
 
+    attr.mq_flags = 0;
+    attr.mq_curmsgs = 0;
+
     snprintf(c->mq_msg_name, NAME_MAX, DIME_CONNECTION_MQ_NAME_TMPL, disp, c->id);
-    /*dime_debug("build connection [%s]", c->mq_msg_name);*/
+    dime_debug("build connection [%s]", c->mq_msg_name);
     c->mq_msg = mq_open(c->mq_msg_name, O_CREAT|O_RDONLY|O_NONBLOCK, 0664, &attr);
     if (c->mq_msg < 0) {
         dime_warn("mq_open failed: %s", strerror(errno));
         goto _error;
     }
 
-    DimeMessageConnect msg_conn;
-    msg_conn.type = MSG_CONNECT;
-    msg_conn.id  = c->id;
-    _send_message(c->mq_srv, (DimeMessage*)&msg_conn);
-
-    // should receive a pong reply
-    if (_receive_message_sync(c->mq_msg, c->msgbuf, c->msgsize, (DimeMessage*)&msg_conn) < 0) {
-        // means not connected, server may not start.
-        // TODO: pull up server right now and retry
-        goto _error;
-    }
-
-
-    g_assert (msg_conn.id == c->id);
-
     c->ch = g_io_channel_unix_new(c->mq_msg);
     g_io_channel_set_encoding(c->ch, NULL, NULL);
     g_io_channel_set_buffered(c->ch, FALSE);
     g_io_add_watch(c->ch, G_IO_IN, client_dispatch_callback, c);
 
-    dime_debug("new connection");
     _conn = c;
+    dime_mq_build_connect(c);
+    dime_debug("new connection");
     return 0;
 
 _error:
@@ -245,33 +298,24 @@ DimeClient* dime_mq_acquire_token()
     dime_mq_connect();
 
     DimeClient* c = (DimeClient*)calloc(1, sizeof(DimeClient));
+    c->magic = CLIENT_MAGIC;
     c->conn = _conn;
 
     DimeMessageToken msg_token;
     msg_token.type = MSG_ACQUIRE_TOKEN;
-    msg_token.id = c->conn->id;
-    _send_message(c->conn->mq_srv, (DimeMessage*)&msg_token);
+    msg_token.id = _conn->id;
+    msg_token.outband = (uintptr_t)c;
+    _send_message(_conn->mq_srv, (DimeMessage*)&msg_token);
 
-    // should receive a pong reply
-    if (_receive_message_sync(c->conn->mq_msg, c->conn->msgbuf, c->conn->msgsize, (DimeMessage*)&msg_token) < 0) {
-        goto _error;
-    }
-
-
-    g_assert (msg_token.type == MSG_ACQUIRE_TOKEN);
-    c->token = msg_token.token;
-    dime_info("acquired token %d", c->token);
-
-
+    dime_debug("");
     return c;
-
-_error:
-    free(c);
-    return NULL;
 }
 
 int dime_mq_release_token(DimeClient* c)
 {
+    if (c->conn->state != CONN_ESTABLISHED || c->token == 0)
+        return -1;
+
     DimeMessageToken msg_token;
     msg_token.type = MSG_RELEASE_TOKEN;
     msg_token.token = c->token;
@@ -286,6 +330,9 @@ int dime_mq_release_token(DimeClient* c)
 
 int dime_mq_client_send(DimeClient* c, int8_t flag, int8_t type, ...)
 {
+    if (c->conn->state != CONN_ESTABLISHED || c->token == 0)
+        return -1;
+
     va_list ap;
 
     DimeMessage msg = {.type = type };
@@ -334,7 +381,7 @@ static int handle_connect(DimeServer* s, DimeMessageConnect* msg_conn)
         .mq_curmsgs = 0,
         .mq_flags = 0,
         .mq_msgsize = MSG_BUF_SIZE,
-        .mq_maxmsg = 10,
+        .mq_maxmsg = MSG_MAX_NR,
     };
     mqd_t mq = mq_open(conn_name, O_CREAT|O_WRONLY|O_NONBLOCK, 0664, &attr);
     if (mq < 0) {
@@ -354,13 +401,11 @@ static int handle_connect(DimeServer* s, DimeMessageConnect* msg_conn)
 static int handle_token(DimeServer* s, DimeMessageToken* msg_token)
 {
     if (msg_token->type == MSG_ACQUIRE_TOKEN) {
-        DimeMessageToken resp;
-        resp.type = MSG_ACQUIRE_TOKEN;
-        resp.id = msg_token->id;
+        DimeMessageToken resp = *msg_token;
         resp.token = s->last++; //FIXME: terrible, what if overflow and circle back
 
         dime_debug("acquire token: conn %d", msg_token->id);
-        mqd_t mq = (mqd_t)g_hash_table_lookup(s->connections, GINT_TO_POINTER(msg_token->id));
+        mqd_t mq = (mqd_t)(long)g_hash_table_lookup(s->connections, GINT_TO_POINTER(msg_token->id));
         g_assert(mq != 0);
 
         _send_message(mq, (DimeMessage*)&resp);
@@ -385,8 +430,8 @@ static int handle_input(DimeServer* s, DimeMessageInput* msg_input)
     resp.token = msg_input->token;
     resp.result = 1;
 
-    int id = (mqd_t)g_hash_table_lookup(s->token_map, GINT_TO_POINTER(msg_input->token));
-    mqd_t mq = (mqd_t)g_hash_table_lookup(s->connections, GINT_TO_POINTER(id));
+    int id = (long)g_hash_table_lookup(s->token_map, GINT_TO_POINTER(msg_input->token));
+    mqd_t mq = (mqd_t)(long)g_hash_table_lookup(s->connections, GINT_TO_POINTER(id));
     g_assert(mq != 0);
     _send_message(mq, (DimeMessage*)&resp);
 
@@ -439,7 +484,7 @@ DimeServer* dime_mq_server_new()
         .mq_curmsgs = 0,
         .mq_flags = 0,
         .mq_msgsize = MSG_BUF_SIZE,
-        .mq_maxmsg = 10,
+        .mq_maxmsg = MSG_MAX_NR,
     };
     s->mq = mq_open(s->mq_name, O_CREAT|O_RDONLY|O_NONBLOCK, 0664, &attr);
     if (s->mq < 0) {

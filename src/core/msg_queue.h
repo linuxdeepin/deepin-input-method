@@ -117,8 +117,9 @@ typedef struct {
 typedef struct {
     int8_t type;
     int8_t flags;
-    int id;
+    int id; /* opaque id (actually it's pid_t now) */
     uint32_t token;
+    uintptr_t outband; /* provided by client */
 } DimeMessageToken;
 
 /* flags for DimeMessage */
