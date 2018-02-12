@@ -6,9 +6,13 @@ option(DIM_DEBUG "toggle debug mode" ON)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS on)
 
+set(CMAKE_C_COMPILER "/usr/bin/clang")
+set(CMAKE_CXX_COMPILER "/usr/bin/clang++")
+
 # common flags used by all targets
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -fno-strict-aliasing -pipe")
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -g -Og -fno-strict-aliasing -pipe")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -O2 -pipe")
+#set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -g -Og -fno-strict-aliasing -pipe")
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -g -pipe")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")

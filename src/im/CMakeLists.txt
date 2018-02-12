@@ -4,12 +4,13 @@ include_directories(../core)
 set(ENGINE dinput)
 
 pkg_check_modules(GLib REQUIRED IMPORTED_TARGET glib-2.0)
+pkg_check_modules(PY REQUIRED IMPORTED_TARGET libpinyin)
 
-file(GLOB SRCS LIST_DIRECTORIES false *.c)
+file(GLOB SRCS LIST_DIRECTORIES false *.c *.cpp)
 list(APPEND SRCS ../core/msg_queue.c)
 
 add_executable(${ENGINE} ${SRCS})
-target_link_libraries(${ENGINE} PUBLIC PkgConfig::GLib rt pthread)
+target_link_libraries(${ENGINE} PUBLIC PkgConfig::GLib rt pthread PkgConfig::PY)
 
 
 #set(UI dinput-panel)
