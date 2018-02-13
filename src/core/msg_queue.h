@@ -24,6 +24,9 @@ typedef enum {
     MSG_ACQUIRE_TOKEN,
     MSG_RELEASE_TOKEN,
     MSG_CONNECT,
+    MSG_DISCONNECT,
+
+    MSG_SHUTDOWN,
 
     MSG_MAX
 } DIME_MSG_TYPE;
@@ -117,6 +120,24 @@ typedef struct {
     int id; /* opaque id (actually it's pid_t now) */
 } DimeMessageConnect;
 
+typedef struct {
+    int8_t type;
+    int8_t flags;
+
+    int id; /* opaque id (actually it's pid_t now) */
+} DimeMessageDisconnect;
+
+/* server shutdown
+ * broadcast to all connections, and if server crashes, this won't be sent.
+ **/
+typedef struct {
+    int8_t type;
+    int8_t flags;
+} DimeMessageShutdown;
+
+/* request/release token (IC)
+ * this has the same functionality as Ic message 
+ **/
 typedef struct {
     int8_t type;
     int8_t flags;

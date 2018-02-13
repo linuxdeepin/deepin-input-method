@@ -24,9 +24,10 @@ gboolean on_idle(gpointer data)
 
     dime_mq_client_enable(c);
 
-    if (dime_mq_client_key(c, *p++, 0) < 0) {
-        return FALSE;
+    if (dime_mq_client_key(c, *p, 0) < 0) {
+        return TRUE;
     }
+    p++;
 
     if (*p == 0) {
         dime_mq_client_key_async(c, '\n', 0); // assume commit
@@ -78,9 +79,7 @@ int main(int argc, char *argv[])
             .on_preedit = on_preedit
         };
         dime_mq_client_set_receive_callbacks(c, cbs);
-        usleep(100);
-
-        g_timeout_add(1, on_idle, c);
+        g_timeout_add(0, on_idle, c);
 
     } else if (pid > 0) {
         DimeServer* s = dime_mq_server_new();
