@@ -8,7 +8,10 @@
 #define dime_info(fmt, ...) g_info("%s: " fmt, __func__, ##__VA_ARGS__)
 #define dime_fatal(fmt, ...) g_fatal("%s: " fmt, __func__, ##__VA_ARGS__)
 #define dime_warn(fmt, ...) g_warning("%s: " fmt, __func__, ##__VA_ARGS__)
-#define dime_debug(fmt, ...) g_debug("%s: " fmt, __func__, ##__VA_ARGS__)
+#define dime_debug(fmt, ...) do { \
+    /* G_DEBUG_HERE(); */ \
+    g_debug("%s: " fmt, __func__, ##__VA_ARGS__); \
+} while (0)
 
 #else
 

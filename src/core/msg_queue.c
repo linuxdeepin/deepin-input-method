@@ -140,6 +140,13 @@ static int _receive_message(mqd_t mq, char* buf, size_t sz, DimeMessage* msg)
     ssize_t nread = mq_receive(mq, buf, sz, NULL);
     if (nread > 0) {
         memcpy(msg, buf, g_msgsz[((DimeMessage*)buf)->type]);
+        if (msg->type == MSG_COMMIT) {
+            ((DimeMessageCommit*)msg)->text = (buf + g_msgsz[MSG_COMMIT]);
+
+        } else if (msg->type == MSG_PREEDIT) {
+            ((DimeMessagePreedit*)msg)->text = (buf + g_msgsz[MSG_COMMIT]);
+
+        }
         return 0;
 
     } else {
@@ -155,6 +162,13 @@ static int _receive_message_sync(mqd_t mq, char* buf, size_t sz, DimeMessage* ms
         ssize_t nread = mq_receive(mq, buf, sz, NULL);
         if (nread > 0) {
             memcpy(msg, buf, g_msgsz[((DimeMessage*)buf)->type]);
+            if (msg->type == MSG_COMMIT) {
+                ((DimeMessageCommit*)msg)->text = (buf + g_msgsz[MSG_COMMIT]);
+
+            } else if (msg->type == MSG_PREEDIT) {
+                ((DimeMessagePreedit*)msg)->text = (buf + g_msgsz[MSG_COMMIT]);
+
+            }
             return 0;
 
         } else {
@@ -176,10 +190,18 @@ static int _send_message(mqd_t mq, DimeMessage* msg)
     return 0;
 }
 
-static int _send_message_sync(mqd_t mq, DimeMessage* msg)
+static int _send_message_sync(mqd_t mq, DimeMessage* msg, ...)
 {
+    // assume outband data has been packed along with msg pointer
+    int outband_sz = 0;
+    if (msg->type == MSG_PREEDIT || msg->type == MSG_COMMIT) {
+        va_list(ap);
+        va_start(ap, msg);
+        outband_sz = va_arg(ap, int);
+        va_end(ap);
+    }
     for (;;) {
-        if (mq_send(mq, (char*)msg, g_msgsz[msg->type], 0) < 0) {
+        if (mq_send(mq, (char*)msg, g_msgsz[msg->type] + outband_sz, 0) < 0) {
             if (errno == EAGAIN) {
                 usleep(100);
                 continue;
@@ -254,8 +276,11 @@ static gboolean client_dispatch_callback(GIOChannel *ch, GIOCondition condition,
                 _handle_client_message(msg.forward.token, &msg, on_forward);
                 break;
 
+            case MSG_INPUT_FEEDBACK:
+                break;
+
             default: 
-                /*g_assert_not_reached();*/
+                g_assert_not_reached();
                 break;
         }
     }
@@ -568,23 +593,22 @@ static int handle_input(DimeServer* s, DimeMessageInput* msg_input)
     //TODO: IM engine 
     int key = msg_input->key;
     if (key == '\n') {
-        DimeMessageCommit commit = {
-            .type = MSG_COMMIT,
-            .flags = 0,
-            .token = msg_input->token,
-        };
-        strcpy(commit.text, EIM.StringGet);
-        dime_debug("commit %s", commit.text);
-        _send_message_sync(mq, (DimeMessage*)&commit);
+        DimeMessageCommit* commit = (DimeMessageCommit*)s->msgbuf;
+        commit->type = MSG_COMMIT;
+        commit->flags = 0;
+        commit->token = msg_input->token;
+        commit->text_len = strlen(EIM.StringGet) + 1;
+        strcpy(s->msgbuf + g_msgsz[MSG_COMMIT], EIM.StringGet);
+        _send_message_sync(mq, (DimeMessage*)commit, commit->text_len);
+
     } else {
         PY_DoInput(key);
-        DimeMessagePreedit preedit = {
-            .type = MSG_PREEDIT,
-            .flags = 0,
-            .token = msg_input->token,
-        };
-        strcpy(preedit.text, EIM.CodeInput);
-        _send_message_sync(mq, (DimeMessage*)&preedit);
+        DimeMessagePreedit* preedit = (DimeMessagePreedit*)s->msgbuf;
+        preedit->type = MSG_PREEDIT;
+        preedit->flags = 0;
+        preedit->token = msg_input->token;
+        preedit->text_len = strlen(EIM.CodeInput) + 1;
+        _send_message_sync(mq, (DimeMessage*)preedit, preedit->text_len);
     }
 
     return 0;

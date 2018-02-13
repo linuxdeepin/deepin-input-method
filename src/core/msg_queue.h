@@ -83,7 +83,9 @@ typedef struct {
 
     uint32_t id;
     uint32_t token; /* mark client */
-    char text[1024];
+    char* text; /* filled by server, and it only keeps valid before next 
+                   message gets recieved. no need to be freed */
+    int text_len;
 } DimeMessageCommit;
 
 typedef struct {
@@ -91,7 +93,8 @@ typedef struct {
     int8_t flags;
 
     uint32_t token; /* mark client */
-    char text[1024];
+    char* text; /* see Commit.text */
+    int text_len;
 } DimeMessagePreedit;
 
 typedef struct {

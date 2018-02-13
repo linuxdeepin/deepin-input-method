@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <locale.h>
 #include <mqueue.h>
 
 #include "msg_queue.h"
@@ -48,6 +49,8 @@ static gboolean on_commit(DimeClient* c, DimeMessage* msg)
 
 int main(int argc, char *argv[])
 {
+    setlocale(LC_ALL, "");
+
     GMainLoop *l = g_main_loop_new(NULL, TRUE);
 
     pid_t pid = fork();
