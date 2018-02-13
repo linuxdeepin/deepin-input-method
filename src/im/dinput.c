@@ -12,12 +12,14 @@
 #include "msg_queue.h"
 #include "log.h"
 
+#include "py.h"
+
 char py[] = "zhongguo";
 char *p = py;
 gboolean on_idle(gpointer data)
 {
     DimeClient* c = (DimeClient*)data;
-    if (!dime_mq_client_valid(c)) 
+    if (!dime_mq_client_is_valid(c)) 
         return TRUE;
 
     dime_mq_client_enable(c);
@@ -47,6 +49,21 @@ static gboolean on_commit(DimeClient* c, DimeMessage* msg)
     return 0;
 }
 
+// server
+static gboolean on_input(DimeServer* s, DimeMessageInput* msg)
+{
+    //TODO: IM engine 
+    int key = msg->key;
+    if (key == '\n') {
+        dime_mq_server_send(s, msg->token, 0, MSG_COMMIT, EIM.StringGet, strlen(EIM.StringGet) + 1);
+    } else {
+        PY_DoInput(key);
+        dime_mq_server_send(s, msg->token, 0, MSG_PREEDIT, EIM.CodeInput, strlen(EIM.CodeInput) + 1);
+    }
+
+    return FALSE;
+}
+
 int main(int argc, char *argv[])
 {
     setlocale(LC_ALL, "");
@@ -67,6 +84,12 @@ int main(int argc, char *argv[])
 
     } else if (pid > 0) {
         DimeServer* s = dime_mq_server_new();
+        PY_Init(0);
+
+        DimeServerCallbacks cbs = {
+            .on_input = on_input
+        };
+        dime_mq_server_set_callbacks(s, cbs);
 
         //TODO: need to handle this crash and restore situation for client
         /*dime_mq_server_close(s);*/

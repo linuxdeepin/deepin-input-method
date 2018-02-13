@@ -122,7 +122,7 @@ typedef struct {
     int8_t flags;
     int id; /* opaque id (actually it's pid_t now) */
     uint32_t token;
-    uintptr_t outband; /* provided by client */
+    uintptr_t outband; /* internal use, provided by client */
 } DimeMessageToken;
 
 /* flags for DimeMessage */
@@ -174,7 +174,9 @@ int dime_mq_disconnect();
 /* one connection can spawn multiple clients, each with one unique token as UUID */
 DimeClient* dime_mq_acquire_token();
 int dime_mq_release_token(DimeClient*);
-int dime_mq_client_valid(DimeClient*);
+int dime_mq_client_is_valid(DimeClient*);
+int dime_mq_client_is_enabled(DimeClient*);
+int dime_mq_client_is_focused(DimeClient*);
 
 int dime_mq_client_enable(DimeClient*);
 int dime_mq_client_focus(DimeClient*, gboolean val);
@@ -184,7 +186,18 @@ int dime_mq_client_send(DimeClient*, int8_t flag, int8_t type, ...);
 int dime_mq_client_set_receive_callbacks(DimeClient*, DimeMessageCallbacks cbs);
 
 // server api
+typedef gboolean (*DimeServerCallback)(DimeServer*, DimeMessage*);
+
+typedef struct _DimeServerCallbacks DimeServerCallbacks;
+struct _DimeServerCallbacks {
+    DimeServerCallback on_input;
+    DimeServerCallback on_enable;
+    DimeServerCallback on_focus;
+    DimeServerCallback on_cursor;
+};
 DimeServer* dime_mq_server_new();
 void dime_mq_server_close(DimeServer* s);
+int dime_mq_server_set_callbacks(DimeServer*, DimeServerCallbacks cbs);
+int dime_mq_server_send(DimeServer*, int token, int8_t flag, int8_t type, ...);
 
 #endif /* ifndef _DIME_MSG_QUEUE_H */

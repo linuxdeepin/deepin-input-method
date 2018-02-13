@@ -16,7 +16,6 @@
 #include "msg_queue.h"
 #include "log.h"
 
-#include "py.h"
 
 //FIXME: should we consider multi-seat ? multi-display ?
 #define DIME_SERVER_MQ_NAME_TMPL "/dime-server-%s"
@@ -48,6 +47,8 @@ struct _DimeServer {
     GIOChannel *ch;
     GHashTable *connections;
     GHashTable *token_map; /* <token, id> */
+
+    DimeServerCallbacks* callbacks;
 
     DimeClientState active; /* current focus client */
 };
@@ -84,6 +85,7 @@ struct _DimeClient {
     uint32_t token; /* if token is 0, means token is not requested from server, 
                         the reasons vary, e.g server is down */
     int enabled: 1;
+    int focused: 1;
 
     DimeMessageCallbacks* callbacks;
 
@@ -144,7 +146,7 @@ static int _receive_message(mqd_t mq, char* buf, size_t sz, DimeMessage* msg)
             ((DimeMessageCommit*)msg)->text = (buf + g_msgsz[MSG_COMMIT]);
 
         } else if (msg->type == MSG_PREEDIT) {
-            ((DimeMessagePreedit*)msg)->text = (buf + g_msgsz[MSG_COMMIT]);
+            ((DimeMessagePreedit*)msg)->text = (buf + g_msgsz[MSG_PREEDIT]);
 
         }
         return 0;
@@ -428,18 +430,30 @@ int dime_mq_release_token(DimeClient* c)
     return 0;
 }
 
-int dime_mq_client_valid(DimeClient* c)
+int dime_mq_client_is_valid(DimeClient* c)
 {
     return c->token != 0 && c->conn && c->conn->state == CONN_ESTABLISHED;
 }
 
+int dime_mq_client_is_enabled(DimeClient* c)
+{
+    return c->enabled;
+}
+
+int dime_mq_client_is_focused(DimeClient* c)
+{
+    return c->focused;
+}
+
 int dime_mq_client_enable(DimeClient* c)
 {
+    if (c->enabled) return 0;
     return dime_mq_client_send(c, 0, MSG_ENABLE, 1);
 }
 
 int dime_mq_client_focus(DimeClient* c, gboolean val)
 {
+    if (val == c->focused) return 0;
     return dime_mq_client_send(c, 0, val ? MSG_FOCUS_IN: MSG_FOCUS_OUT);
 }
 
@@ -455,8 +469,10 @@ int dime_mq_client_key_async(DimeClient* c, int key, uint32_t time)
 
 int dime_mq_client_send(DimeClient* c, int8_t flag, int8_t type, ...)
 {
-    if (c->conn->state != CONN_ESTABLISHED || c->token == 0)
+    if (c->conn->state != CONN_ESTABLISHED || c->token == 0) {
+        dime_debug("no connection or invalid client, drop request");
         return -1;
+    }
 
     dime_debug("client(%d) send(%d, %s)%s", c->token, type, g_msgname[type],
             (flag & DIME_MSG_FLAG_SYNC ? " SYNC":""));
@@ -474,8 +490,13 @@ int dime_mq_client_send(DimeClient* c, int8_t flag, int8_t type, ...)
             break;
 
         case MSG_FOCUS_IN:
+            c->focused = FALSE;
+            msg.focus.token = c->token;
+            break;
+
         case MSG_FOCUS_OUT:
             msg.focus.token = c->token;
+            c->focused = TRUE;
             break;
 
         case MSG_ADD_IC:
@@ -519,8 +540,10 @@ int dime_mq_client_set_receive_callbacks(DimeClient* c, DimeMessageCallbacks cbs
 /*----------------------------------------------------------------------*/
 
 
-static int handle_connect(DimeServer* s, DimeMessageConnect* msg_conn)
+static int handle_connect(DimeServer* s, DimeMessage* msg)
 {
+    DimeMessageConnect* msg_conn = &msg->connect;
+
     g_return_val_if_fail(msg_conn && msg_conn->type == MSG_CONNECT, -1);
 
     char conn_name[NAME_MAX];
@@ -547,8 +570,10 @@ static int handle_connect(DimeServer* s, DimeMessageConnect* msg_conn)
     return 0;
 }
 
-static int handle_token(DimeServer* s, DimeMessageToken* msg_token)
+static int handle_token(DimeServer* s, DimeMessage* msg)
 {
+    DimeMessageToken* msg_token = &msg->token;
+
     if (msg_token->type == MSG_ACQUIRE_TOKEN) {
         DimeMessageToken resp = *msg_token;
         resp.token = s->last++; //FIXME: terrible, what if overflow and circle back
@@ -570,8 +595,10 @@ static int handle_token(DimeServer* s, DimeMessageToken* msg_token)
     return 0;
 }
 
-static int handle_input(DimeServer* s, DimeMessageInput* msg_input)
+static int handle_input(DimeServer* s, DimeMessage* msg)
 {
+    DimeMessageInput* msg_input = &msg->input;
+
     dime_debug("input %c", msg_input->key);
 
     DimeMessageInputFeedback resp;
@@ -590,32 +617,17 @@ static int handle_input(DimeServer* s, DimeMessageInput* msg_input)
         return 0;
     }
 
-    //TODO: IM engine 
-    int key = msg_input->key;
-    if (key == '\n') {
-        DimeMessageCommit* commit = (DimeMessageCommit*)s->msgbuf;
-        commit->type = MSG_COMMIT;
-        commit->flags = 0;
-        commit->token = msg_input->token;
-        commit->text_len = strlen(EIM.StringGet) + 1;
-        strcpy(s->msgbuf + g_msgsz[MSG_COMMIT], EIM.StringGet);
-        _send_message_sync(mq, (DimeMessage*)commit, commit->text_len);
-
-    } else {
-        PY_DoInput(key);
-        DimeMessagePreedit* preedit = (DimeMessagePreedit*)s->msgbuf;
-        preedit->type = MSG_PREEDIT;
-        preedit->flags = 0;
-        preedit->token = msg_input->token;
-        preedit->text_len = strlen(EIM.CodeInput) + 1;
-        _send_message_sync(mq, (DimeMessage*)preedit, preedit->text_len);
+    if (s->callbacks && s->callbacks->on_input) {
+        return s->callbacks->on_input(s, msg);
     }
 
     return 0;
 }
 
-static int handle_focus(DimeServer* s, DimeMessageFocus* msg_focus)
+static int handle_focus(DimeServer* s, DimeMessage* msg)
 {
+    DimeMessageFocus* msg_focus = &msg->focus;
+
     dime_debug("client(%d) ", msg_focus->token, g_msgname[msg_focus->type]);
 
     int id = (long)g_hash_table_lookup(s->token_map, GINT_TO_POINTER(msg_focus->token));
@@ -629,11 +641,16 @@ static int handle_focus(DimeServer* s, DimeMessageFocus* msg_focus)
         s->active.token = 0;
     }
 
+    if (s->callbacks && s->callbacks->on_focus) {
+        return s->callbacks->on_focus(s, msg);
+    }
     return 0;
 }
 
-static int handle_enable(DimeServer* s, DimeMessageEnable* msg_enable)
+static int handle_enable(DimeServer* s, DimeMessage* msg)
 {
+    DimeMessageEnable* msg_enable = &msg->enable;
+
     dime_debug("client(%d) enable %d", msg_enable->token, msg_enable->val);
 
     int id = (long)g_hash_table_lookup(s->token_map, GINT_TO_POINTER(msg_enable->token));
@@ -646,22 +663,49 @@ static int handle_enable(DimeServer* s, DimeMessageEnable* msg_enable)
     if (s->active.token == msg_enable->token) {
         s->active.enabled = msg_enable->val;
     }
+
+    if (s->callbacks && s->callbacks->on_enable) {
+        return s->callbacks->on_enable(s, msg);
+    }
     return 0;
 }
 
+static int handle_unimplemented(DimeServer* s, DimeMessage* msg)
+{
+    dime_warn("handle for %s not implemented", g_msgname[msg->type]);
+    return 0;
+}
+
+static int handle_invalid(DimeServer* s, DimeMessage* msg)
+{
+    dime_warn("invalid handle for %s", g_msgname[msg->type]);
+    return 0;
+}
+
+static DimeServerCallback g_dispatch_table[MSG_MAX] = {
+    /*MSG_INVALID,*/        handle_invalid,
+    /*MSG_ENABLE,*/         handle_enable,
+    /*MSG_FOCUS_IN,*/       handle_focus,
+    /*MSG_FOCUS_OUT,*/      handle_focus,
+    /*MSG_ADD_IC,*/         handle_unimplemented,
+    /*MSG_DEL_IC,*/         handle_unimplemented,
+    /*MSG_CURSOR,*/         handle_unimplemented,
+    /*MSG_INPUT,*/          handle_input,
+    /*MSG_INPUT_FEEDBACK,*/ handle_invalid,
+
+    /*MSG_COMMIT,*/         handle_invalid,
+    /*MSG_PREEDIT,*/        handle_invalid,
+    /*MSG_PREEDIT_CLEAR,*/  handle_invalid,
+    /*MSG_FORWARD,*/        handle_invalid,
+
+    /*MSG_ACQUIRE_TOKEN,*/  handle_token,
+    /*MSG_RELEASE_TOKEN,*/  handle_token,
+    /*MSG_CONNECT,*/        handle_connect,
+};
+
 static gboolean dispatch(DimeServer* s, DimeMessage* msg)
 {
-    switch (msg->type) {
-        case MSG_CONNECT:       return !handle_connect(s, &msg->connect);
-        case MSG_ACQUIRE_TOKEN:
-        case MSG_RELEASE_TOKEN: return !handle_token(s, &msg->token);
-        case MSG_INPUT:         return !handle_input(s, &msg->input);
-        case MSG_ENABLE:        return !handle_enable(s, &msg->enable);
-        case MSG_FOCUS_IN:
-        case MSG_FOCUS_OUT:     return !handle_focus(s, &msg->focus);
-        default:                g_assert_not_reached(); break;
-    }
-    return FALSE;
+    return g_dispatch_table[msg->type](s, msg) == 0;
 }
 
 static gboolean server_callback(GIOChannel *ch, GIOCondition condition, gpointer data)
@@ -718,7 +762,6 @@ DimeServer* dime_mq_server_new()
     g_io_channel_set_buffered(s->ch, FALSE);
     g_io_add_watch(s->ch, G_IO_IN, server_callback, s);
 
-    PY_Init(0);
     return s;
 }
 
@@ -730,5 +773,55 @@ void dime_mq_server_close(DimeServer* s)
     g_io_channel_unref(s->ch);
     free(s->msgbuf);
     free(s);
+}
+
+int dime_mq_server_set_callbacks(DimeServer* s, DimeServerCallbacks cbs)
+{
+    if (!s->callbacks) {
+        s->callbacks = (DimeServerCallbacks*)calloc(1, sizeof(DimeServerCallbacks));
+    }
+    memcpy(s->callbacks, &cbs, sizeof cbs);
+    return 0;
+}
+
+int dime_mq_server_send(DimeServer* s, int token, int8_t flag, int8_t type, ...)
+{
+    va_list(ap);
+    va_start(ap, type);
+
+    int id = (long)g_hash_table_lookup(s->token_map, GINT_TO_POINTER(token));
+    mqd_t mq_cli = (mqd_t)(long)g_hash_table_lookup(s->connections, GINT_TO_POINTER(id));
+    g_assert(mq_cli != 0);
+
+    switch (type) {
+        case MSG_COMMIT: {
+            DimeMessageCommit* commit = (DimeMessageCommit*)s->msgbuf;
+            commit->type = MSG_COMMIT;
+            commit->flags = 0;
+            commit->token = token;
+            char *data = va_arg(ap, char*);
+            strcpy(s->msgbuf + g_msgsz[MSG_COMMIT], data);
+            commit->text_len = va_arg(ap, int);
+            _send_message_sync(mq_cli, (DimeMessage*)commit, commit->text_len);
+            break;
+        }
+
+        case MSG_PREEDIT: {
+            DimeMessagePreedit* preedit = (DimeMessagePreedit*)s->msgbuf;
+            preedit->type = MSG_PREEDIT;
+            preedit->flags = 0;
+            preedit->token = token;
+            char *data = va_arg(ap, char*);
+            strcpy(s->msgbuf + g_msgsz[MSG_PREEDIT], data);
+            preedit->text_len = va_arg(ap, int);
+            _send_message_sync(mq_cli, (DimeMessage*)preedit, preedit->text_len);
+            break;
+        }
+
+        default: break;
+    }
+
+    va_end(ap);
+    return 0;
 }
 
