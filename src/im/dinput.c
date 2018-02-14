@@ -14,8 +14,16 @@
 
 #include "py.h"
 
+#ifdef G_LOG_DOMAIN
+#undef G_LOG_DOMAIN
+#endif
+#define G_LOG_DOMAIN "dime"
+
 char py[] = "zhongguo";
-char *p = py;
+char *p1 = py;
+char *p2 = py;
+static DimeClient* c1 = NULL, *c2 = NULL;
+
 gboolean on_idle(gpointer data)
 {
     DimeClient* c = (DimeClient*)data;
@@ -24,15 +32,20 @@ gboolean on_idle(gpointer data)
 
     dime_mq_client_enable(c);
 
-    if (dime_mq_client_key(c, *p, 0) < 0) {
-        return TRUE;
+    if (c == c1) {
+        dime_mq_client_key(c, *p1++, 0);
+        if (*p1 == 0) {
+            dime_mq_client_key_async(c, '\n', 0); // assume commit
+            return FALSE;
+        }
+    } else {
+        dime_mq_client_key(c, *p2++, 0);
+        if (*p2 == 0) {
+            dime_mq_client_key_async(c, '\n', 0); // assume commit
+            return FALSE;
+        }
     }
-    p++;
 
-    if (*p == 0) {
-        dime_mq_client_key_async(c, '\n', 0); // assume commit
-        return FALSE;
-    }
     /*dime_mq_release_token(c);*/
     return TRUE;
 }
@@ -40,13 +53,13 @@ gboolean on_idle(gpointer data)
 
 static gboolean on_preedit(DimeClient* c, DimeMessage* msg)
 {
-    dime_debug("%s", msg->preedit.text);
+    dime_debug("%p: %s", c, msg->preedit.text);
     return 0;
 }
 
 static gboolean on_commit(DimeClient* c, DimeMessage* msg)
 {
-    dime_debug("%s", msg->commit.text);
+    dime_debug("%p: %s", c, msg->commit.text);
     return 0;
 }
 
@@ -73,13 +86,22 @@ int main(int argc, char *argv[])
 
     pid_t pid = fork();
     if (pid == 0) {
-        DimeClient* c = dime_mq_acquire_token();
         DimeMessageCallbacks cbs = {
             .on_commit = on_commit,
             .on_preedit = on_preedit
         };
-        dime_mq_client_set_receive_callbacks(c, cbs);
-        g_timeout_add(0, on_idle, c);
+
+        {
+            c1 = dime_mq_acquire_token();
+            dime_mq_client_set_receive_callbacks(c1, cbs);
+            g_timeout_add(0, on_idle, c1);
+        }
+
+        {
+            c2 = dime_mq_acquire_token();
+            dime_mq_client_set_receive_callbacks(c2, cbs);
+            g_timeout_add(0, on_idle, c2);
+        }
 
     } else if (pid > 0) {
         DimeServer* s = dime_mq_server_new();

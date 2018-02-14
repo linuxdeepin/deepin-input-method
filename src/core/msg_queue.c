@@ -206,43 +206,52 @@ static DimeClient* _find_client(DimeConnection* conn, uint32_t token)
 
 #define _handle_client_message(token, msg, cb) do {     \
     DimeClient* c = _find_client(_conn, token);         \
+    dime_debug("get %s client %d", g_msgname[msg.type], token); \
     if (c && c->callbacks && c->callbacks->cb)          \
-        c->callbacks->cb(c, msg);       \
+        c->callbacks->cb(c, &msg);       \
 } while (0)
 
-static int client_dispatch_message(DimeMessage* msg)
+static int client_dispatch_message()
 {
+    DimeMessage msg;
+
     int ret = 0;
-    switch(msg->type) {
+    if ((ret = _receive_message(_conn->mq_msg, _conn->msgbuf, _conn->msgsize, &msg)) < 0) {
+        return ret;
+    }
+
+    /*dime_debug("get %s", g_msgname[msg.type]);*/
+
+    switch(msg.type) {
         case MSG_CONNECT:
             if (_conn->state == CONN_HANDSHAKE) {
-                g_assert(_conn->id == msg->connect.id);
+                g_assert(_conn->id == msg.connect.id);
                 _conn->state = CONN_ESTABLISHED;
             }
             break;
 
         case MSG_ACQUIRE_TOKEN: {
-            DimeClient* c = (DimeClient*)msg->token.outband;
+            DimeClient* c = (DimeClient*)msg.token.outband;
             g_assert(c->magic == CLIENT_MAGIC);
-            c->token = msg->token.token;
+            c->token = msg.token.token;
             dime_info("acquired token %d", c->token);
             break;
         }
 
         case MSG_COMMIT: 
-            _handle_client_message(msg->commit.token, msg, on_commit);
+            _handle_client_message(msg.commit.token, msg, on_commit);
             break;
         case MSG_ENABLE: 
-            _handle_client_message(msg->enable.token, msg, on_enable);
+            _handle_client_message(msg.enable.token, msg, on_enable);
             break;
         case MSG_PREEDIT:
-            _handle_client_message(msg->preedit.token, msg, on_preedit);
+            _handle_client_message(msg.preedit.token, msg, on_preedit);
             break;
         case MSG_PREEDIT_CLEAR:
-            _handle_client_message(msg->preedit_clear.token, msg, on_preedit_clear);
+            _handle_client_message(msg.preedit_clear.token, msg, on_preedit_clear);
             break;
         case MSG_FORWARD: 
-            _handle_client_message(msg->forward.token, msg, on_forward);
+            _handle_client_message(msg.forward.token, msg, on_forward);
             break;
 
         case MSG_INPUT_FEEDBACK:
@@ -261,12 +270,7 @@ static gboolean client_dispatch_callback(GIOChannel *ch, GIOCondition condition,
     if (condition != G_IO_IN)
         return FALSE;
 
-    DimeMessage msg;
-    if (_receive_message(_conn->mq_msg, _conn->msgbuf, _conn->msgsize, &msg) >= 0) {
-        dime_debug("get %s", g_msgname[msg.type]);
-        client_dispatch_message(&msg);
-    }
-
+    client_dispatch_message();
     return TRUE;
 }
 
@@ -460,13 +464,13 @@ int dime_mq_client_send(DimeClient* c, int8_t flag, int8_t type, ...)
             break;
 
         case MSG_FOCUS_IN:
-            c->focused = FALSE;
             msg.focus.token = c->token;
+            c->focused = TRUE;
             break;
 
         case MSG_FOCUS_OUT:
             msg.focus.token = c->token;
-            c->focused = TRUE;
+            c->focused = FALSE;
             break;
 
         case MSG_ADD_IC:
@@ -488,15 +492,9 @@ int dime_mq_client_send(DimeClient* c, int8_t flag, int8_t type, ...)
     _send_message(c->conn->mq_srv, &msg);
 
     if (flag & DIME_MSG_FLAG_SYNC) {
-        if (_receive_message(c->conn->mq_msg, c->conn->msgbuf, c->conn->msgsize, &msg) < 0) {
-            goto _error;
-        }
-        return client_dispatch_message(&msg);
+        return client_dispatch_message();
     }
     return 0;
-
-_error:
-    return -1;
 }
 
 int dime_mq_client_set_receive_callbacks(DimeClient* c, DimeMessageCallbacks cbs)
@@ -570,7 +568,7 @@ static int handle_input(DimeServer* s, DimeMessage* msg)
 {
     DimeMessageInput* msg_input = &msg->input;
 
-    dime_debug("input %c", msg_input->key);
+    dime_debug("client %d key %c", msg_input->token, msg_input->key);
 
     DimeMessageInputFeedback resp;
     resp.type = MSG_INPUT_FEEDBACK;
