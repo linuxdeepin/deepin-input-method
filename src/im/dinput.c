@@ -23,12 +23,20 @@ char py[] = "zhongguo";
 char *p1 = py;
 char *p2 = py;
 static DimeClient* c1 = NULL, *c2 = NULL;
+static DimeServer* s = NULL;
+
+inline static int id(DimeClient* c)
+{
+    return g_int_hash(c) % 17;
+}
 
 gboolean on_idle(gpointer data)
 {
     DimeClient* c = (DimeClient*)data;
-    if (!dime_mq_client_is_valid(c)) 
-        return TRUE;
+    if (!dime_mq_client_is_valid(c)) {
+        g_timeout_add(10, on_idle, data);
+        return FALSE;
+    }
 
     dime_mq_client_enable(c);
 
@@ -53,18 +61,18 @@ gboolean on_idle(gpointer data)
 
 static gboolean on_preedit(DimeClient* c, DimeMessage* msg)
 {
-    dime_debug("%p: %s", c, msg->preedit.text);
+    dime_debug("C%d: %s", id(c), msg->preedit.text);
     return 0;
 }
 
 static gboolean on_commit(DimeClient* c, DimeMessage* msg)
 {
-    dime_debug("%p: %s", c, msg->commit.text);
+    dime_debug("C%d: %s", id(c), msg->commit.text);
     return 0;
 }
 
 // server
-static gboolean on_input(DimeServer* s, DimeMessageInput* msg)
+static int on_input(DimeServer* s, DimeMessageInput* msg)
 {
     //TODO: IM engine 
     int key = msg->key;
@@ -75,17 +83,18 @@ static gboolean on_input(DimeServer* s, DimeMessageInput* msg)
         dime_mq_server_send(s, msg->token, 0, MSG_PREEDIT, EIM.CodeInput, strlen(EIM.CodeInput) + 1);
     }
 
-    return FALSE;
+    return 0;
 }
 
 int main(int argc, char *argv[])
 {
     setlocale(LC_ALL, "");
 
+    gchar *cmd = g_path_get_basename(argv[0]);
+
     GMainLoop *l = g_main_loop_new(NULL, TRUE);
 
-    pid_t pid = fork();
-    if (pid == 0) {
+    if (!g_str_equal(cmd, "dinput")) {
         DimeMessageCallbacks cbs = {
             .on_commit = on_commit,
             .on_preedit = on_preedit
@@ -103,8 +112,8 @@ int main(int argc, char *argv[])
             g_timeout_add(0, on_idle, c2);
         }
 
-    } else if (pid > 0) {
-        DimeServer* s = dime_mq_server_new();
+    } else {
+        s = dime_mq_server_new();
         PY_Init(0);
 
         DimeServerCallbacks cbs = {
@@ -112,14 +121,16 @@ int main(int argc, char *argv[])
         };
         dime_mq_server_set_callbacks(s, cbs);
 
-        //TODO: need to handle this crash and restore situation for client
-        /*dime_mq_server_close(s);*/
-        /*s = dime_mq_server_new();*/
-
-    } else {
-        return -1;
     }
 
     g_main_loop_run(l);
+
+    if (g_str_equal(cmd, "dinput")) {
+        dime_mq_server_close(s);
+
+    } else {
+        dime_mq_release_token(c1);
+        dime_mq_release_token(c2);
+    }
     return 0;
 }

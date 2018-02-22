@@ -27,7 +27,10 @@
 #endif
 #define G_LOG_DOMAIN "mq"
 
-#define MSG_BUF_SIZE 4096 /* this is big enough to hold any message */
+//FIXME: NOTE: we need to be care when choosing these constants. since mq_open may 
+//fail with EMFILE (which can be actually caused by RLIMIT_MSGQUEUE). with these 
+//settings we can handle over 100 connections which is sufficient as far as I can see.
+#define MSG_BUF_SIZE 512  /* this is big enough to hold any message */
 #define MSG_MAX_NR 6
 
 #define CLIENT_MAGIC 0xfadeceed
@@ -316,7 +319,7 @@ int dime_mq_connect()
     };
     c->mq_srv = mq_open(c->mq_name, O_CREAT|O_WRONLY, 0664, &attr);
     if (c->mq_srv < 0) {
-        dime_warn("connect failed: %s", strerror(errno));
+        dime_warn("connect failed: %d: %s", errno, strerror(errno));
         goto _error;
     }
 
@@ -334,7 +337,7 @@ int dime_mq_connect()
     dime_debug("build connection [%s]", c->mq_msg_name);
     c->mq_msg = mq_open(c->mq_msg_name, O_CREAT|O_RDONLY, 0664, &attr);
     if (c->mq_msg < 0) {
-        dime_warn("mq_open failed: %s", strerror(errno));
+        dime_warn("mq_open failed: %d: %s", errno, strerror(errno));
         goto _error;
     }
 
@@ -370,7 +373,9 @@ int dime_mq_disconnect()
 
 DimeClient* dime_mq_acquire_token()
 {
-    dime_mq_connect();
+    if (dime_mq_connect() < 0) {
+        return NULL;
+    }
 
     DimeClient* c = (DimeClient*)calloc(1, sizeof(DimeClient));
     c->magic = CLIENT_MAGIC;

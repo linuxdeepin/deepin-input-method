@@ -4,6 +4,14 @@
 #include <stdint.h>
 #include <glib.h>
 
+G_BEGIN_DECLS
+
+typedef enum {
+    ERR_TIMEOUT = 1,
+    ERR_DISCONNECT,
+    ERR_MAX
+} DIME_ERROR;
+
 typedef enum {
     MSG_INVALID,
 
@@ -187,8 +195,8 @@ struct _DimeMessageCallbacks {
     DimeMessageCallback on_enable;
 };
 
-/* one connection per process ? 
- * called implicitly when necessary
+/* one connection per process, shared by all clients after connection.
+ * this'll be called implicitly when necessary, and only called once.
  **/
 int dime_mq_connect();
 int dime_mq_disconnect();
@@ -220,5 +228,7 @@ DimeServer* dime_mq_server_new();
 void dime_mq_server_close(DimeServer* s);
 int dime_mq_server_set_callbacks(DimeServer*, DimeServerCallbacks cbs);
 int dime_mq_server_send(DimeServer*, int token, int8_t flag, int8_t type, ...);
+
+G_END_DECLS
 
 #endif /* ifndef _DIME_MSG_QUEUE_H */

@@ -12,6 +12,9 @@ list(APPEND SRCS ../core/msg_queue.c)
 add_executable(${ENGINE} ${SRCS})
 target_link_libraries(${ENGINE} PUBLIC PkgConfig::GLib rt pthread PkgConfig::PY)
 
+# testing client
+add_executable(cli ${SRCS})
+target_link_libraries(cli PUBLIC PkgConfig::GLib rt pthread PkgConfig::PY)
 
 #set(UI dinput-panel)
 
