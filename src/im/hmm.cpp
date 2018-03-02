@@ -44,7 +44,7 @@ vector<int> viterbi(const vector<string>& obs, HMM& hmm)
             }
         }
     }
-    cout << "states: " << hmm.states << endl;
+    //cout << "states: " << hmm.states << endl;
 
     int n_states = hmm.states.size();
     int n_seq = obs.size();
@@ -59,21 +59,24 @@ vector<int> viterbi(const vector<string>& obs, HMM& hmm)
 
     for (auto i = 0; i < n_states; i++) {
         if (hmm.emission[st[i]].count(obs[0])) {
-            v[0][i] =  LE(hmm.pi[st[i]]) * LE(hmm.emission[st[i]][obs[0]]);
+            v[0][i] =  LE(hmm.pi[st[i]]) + LE(hmm.emission[st[i]][obs[0]]);
+        } else {
+            v[0][i] = -100000.0;
         }
     }
 
     for (auto i = 1; i < n_seq; i++) {
         for (auto j = 0; j < n_states; j++) {
 
-            double max = 0.0;
+            double max = -1000.0;
             int parent = 0;
             for (auto l = 0; l < n_states; l++) {
-                if (hmm.a[st[l]][st[j]] == 0.0 || hmm.emission[st[j]][obs[i]] == 0.0) {
+                if (hmm.a.count(st[l]) == 0 ||
+                    hmm.a[st[l]].count(st[j]) == 0 || hmm.emission[st[j]].count(obs[i]) == 0) {
                     continue;
                 }
 
-                auto m = v[i-1][l] * LE(hmm.a[st[l]][st[j]]) * LE(hmm.emission[st[j]][obs[i]]);
+                auto m = v[i-1][l] + LE(hmm.a[st[l]][st[j]]) + LE(hmm.emission[st[j]][obs[i]]);
                 if (m > max) {
                     max = m;
                     parent = l;
@@ -85,7 +88,7 @@ vector<int> viterbi(const vector<string>& obs, HMM& hmm)
         }
     }
 
-    double max = 0.0;
+    double max = -1000.0;
     int k = 0;
     for (auto l = 0; l < n_states; l++) {
         auto m = v[n_seq-1][l];

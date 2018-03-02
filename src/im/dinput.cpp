@@ -112,7 +112,7 @@ static HMM load_hmm(const char* filepath)
         auto ch = qry.value(0).toString().toStdString();
         auto prob = qry.value(1).toDouble();
 
-        hmm.pi[ch] = exp(prob);
+        hmm.pi[ch] = (prob);
     }
 
     qry = QSqlQuery("select previous,behind,probability from transition");
@@ -122,7 +122,7 @@ static HMM load_hmm(const char* filepath)
         auto s2 = qry.value(1).toString().toStdString();
         auto prob = qry.value(2).toDouble();
 
-        hmm.a[s1][s2] = exp(prob);
+        hmm.a[s1][s2] = (prob);
     }
 
     //qry = QSqlQuery("select character,pinyin,probability from emission");
@@ -132,7 +132,7 @@ static HMM load_hmm(const char* filepath)
         auto py = qry.value(1).toString().toStdString();
         auto prob = qry.value(2).toDouble();
 
-        hmm.emission[s][py] = exp(prob);
+        hmm.emission[s][py] = (prob);
     }
 
     return hmm;
