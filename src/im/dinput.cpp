@@ -193,6 +193,7 @@ int main(int argc, char *argv[])
 
     } else {
         QCoreApplication app(argc, argv);
+        auto now = QTime::currentTime();
 
         auto hmm = load_hmm("/tmp/hmm.sqlite");
         if (hmm.pi.size() == 0) return -1;
@@ -200,13 +201,12 @@ int main(int argc, char *argv[])
         dime::viterbi(simple_pinyin_split("duan'yu"), hmm);
         dime::viterbi(simple_pinyin_split("gong'ju"), hmm);
         dime::viterbi(simple_pinyin_split("tian'long'ba'bu"), hmm);
-        auto now = QTime::currentTime();
         dime::viterbi(simple_pinyin_split("qiao'feng'he'duan'yu'shi'hao'xiong'di"), hmm);
-        auto d = now.msecsTo(QTime::currentTime());
-        qDebug() << "cost: " << d;
         dime::viterbi(simple_pinyin_split("hao'xiong'di"), hmm);
         dime::viterbi(simple_pinyin_split("yi'jie'shu'sheng"), hmm);
         dime::viterbi(simple_pinyin_split("yi'dong'bu'ru'yi'jing"), hmm);
+        auto d = now.msecsTo(QTime::currentTime());
+        qDebug() << "cost: " << d;
         return 0;
 
 

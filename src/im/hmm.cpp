@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <string>
 #include <vector>
+#include <cassert>
 
 using namespace std;
 
@@ -30,62 +31,71 @@ ostream& operator<<(ostream& os, const unordered_map<K, V>& m)
     return os << "}";
 }
 
-#define LE(p) ((p))
+static vector<string> _hmm_get_zi(HMM& hmm, const string& py)
+{
+    vector<string> res;
+    for (const auto& p: hmm.emission) {
+        if (p.second.find(py) != p.second.end()) {
+            res.push_back(p.first);
+        }
+    }
+
+    return res;
+}
 
 // HMM: initial probabilities, transfer matrix, emission matrix,
 // output probabilities
-vector<int> viterbi(const vector<string>& obs, HMM& hmm)
+vector<string> viterbi(const vector<string>& obs, HMM& hmm)
 {
-    hmm.states.clear();
-    for (const auto& py: obs) {
-        for (const auto& p: hmm.emission) {
-            if (p.second.find(py) != p.second.end()) {
-                hmm.states.push_back(p.first);
-            }
-        }
-    }
-    //cout << "states: " << hmm.states << endl;
-
-    int n_states = hmm.states.size();
+    auto st = _hmm_get_zi(hmm, obs[0]);
+    int n_states = st.size();
     int n_seq = obs.size();
-
-    auto& st = hmm.states;
 
     if (n_states == 0 || n_seq == 0) return {};
 
-    auto res = vector<int>(n_seq);
-    auto v = vector<vector<double>>(n_seq, vector<double>(n_states));
-    auto parents = vector<vector<int>>(n_seq, vector<int>(n_states));
+
+    auto res = vector<string>(n_seq);
+    auto v = unordered_map<int, unordered_map<int, double>>();
+    auto parents = unordered_map<int, unordered_map<int, int>>();
 
     for (auto i = 0; i < n_states; i++) {
         if (hmm.emission[st[i]].count(obs[0])) {
-            v[0][i] =  LE(hmm.pi[st[i]]) + LE(hmm.emission[st[i]][obs[0]]);
+            v[0][i] =  hmm.pi[st[i]] + hmm.emission[st[i]][obs[0]];
         } else {
-            v[0][i] = -100000.0;
+            v[0][i] = -1000.0;
         }
     }
 
+    cout << "0: " << st << endl;
+
     for (auto i = 1; i < n_seq; i++) {
-        for (auto j = 0; j < n_states; j++) {
+        auto st_next = _hmm_get_zi(hmm, obs[i]); 
+        auto n_states_next = st_next.size();
+        for (auto j = 0; j < n_states_next; j++) {
 
             double max = -1000.0;
             int parent = 0;
             for (auto l = 0; l < n_states; l++) {
-                if (hmm.a.count(st[l]) == 0 ||
-                    hmm.a[st[l]].count(st[j]) == 0 || hmm.emission[st[j]].count(obs[i]) == 0) {
+                assert(hmm.emission[st_next[j]].count(obs[i]));
+                if (hmm.a.count(st[l]) == 0 || hmm.a[st[l]].count(st_next[j]) == 0) {
                     continue;
                 }
 
-                auto m = v[i-1][l] + LE(hmm.a[st[l]][st[j]]) + LE(hmm.emission[st[j]][obs[i]]);
+                //assert(v[i-1][l] != 0.0 && v[i-1][l] > -1000.0);
+                auto m = v[i-1][l] + hmm.a[st[l]][st_next[j]] + hmm.emission[st_next[j]][obs[i]];
                 if (m > max) {
                     max = m;
                     parent = l;
                 }
+                //cout << m << endl;
             }
 
             v[i][j] = max;
             parents[i][j] = parent;
         }
+
+        st = st_next;
+        n_states = n_states_next;
     }
 
     double max = -1000.0;
@@ -99,18 +109,15 @@ vector<int> viterbi(const vector<string>& obs, HMM& hmm)
     }
 
     cout << "k = " << k << ", p: " << max << endl;
-    //cout << v << endl;
 
-    res[n_seq-1] = k;
+    res[n_seq-1] = st[k];
     for (auto t = n_seq-2; t >= 0; t--) {
-        res[t] = parents[t+1][res[t+1]];
+        k = parents[t+1][k];
+        res[t] = _hmm_get_zi(hmm, obs[t])[k];
     }
 
 
-    for (auto i: res) {
-        cout << st[i] << " ";
-    }
-    cout << endl;
+    cout << res << endl;
     return res;
 }
 

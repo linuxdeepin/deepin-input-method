@@ -19,7 +19,7 @@ namespace dime
         Matrix emission; // emission matrix
     };
 
-    vector<int> viterbi(const vector<string>& obs, HMM& hmm);
+    vector<string> viterbi(const vector<string>& obs, HMM& hmm);
 }
 
 #endif /* ifndef _DIME_HMM_H */
