@@ -3,6 +3,8 @@ include_directories(../core)
 
 set(ENGINE dinput)
 
+find_package(Qt5Sql)
+
 pkg_check_modules(GLib REQUIRED IMPORTED_TARGET glib-2.0)
 pkg_check_modules(PY REQUIRED IMPORTED_TARGET libpinyin)
 
@@ -10,11 +12,11 @@ file(GLOB SRCS LIST_DIRECTORIES false *.c *.cpp)
 list(APPEND SRCS ../core/msg_queue.c)
 
 add_executable(${ENGINE} ${SRCS})
-target_link_libraries(${ENGINE} PUBLIC PkgConfig::GLib rt pthread PkgConfig::PY)
+target_link_libraries(${ENGINE} PUBLIC PkgConfig::GLib rt pthread PkgConfig::PY Qt5::Sql)
 
 # testing client
 add_executable(cli ${SRCS})
-target_link_libraries(cli PUBLIC PkgConfig::GLib rt pthread PkgConfig::PY)
+target_link_libraries(cli PUBLIC PkgConfig::GLib rt pthread PkgConfig::PY Qt5::Sql)
 
 #set(UI dinput-panel)
 
