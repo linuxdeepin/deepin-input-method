@@ -1,6 +1,7 @@
 #include <QtGui>
 #include <qpa/qplatforminputcontext.h>
 #include <qpa/qplatforminputcontextplugin_p.h>
+#include "dim_input_context.moc"
 
 class Q_GUI_EXPORT DeepinInputContext: public QPlatformInputContext
 {
@@ -96,5 +97,3 @@ class DeepinPlatformInputContextPlugin : public QPlatformInputContextPlugin
             return 0;
         }
 };
-
-#include "dim_input_context.moc"
